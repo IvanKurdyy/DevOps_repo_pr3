@@ -104,3 +104,4 @@ jobs:
         with:
           name: deployment-artifacts
           path: artifacts/
+          include-hidden-files: true
