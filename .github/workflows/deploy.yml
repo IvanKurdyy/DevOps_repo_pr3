@@ -91,7 +91,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           docker compose logs > artifacts/docker.log 2>&1
-          Copy-Item .env artifacts/.env -ErrorAction SilentlyContinue
+          Copy-Item -Path ".env" -Destination "artifacts/.env" -Force
           "Тест завершён $(Get-Date)" > artifacts/report.txt
 
       - name: Upload artifacts
