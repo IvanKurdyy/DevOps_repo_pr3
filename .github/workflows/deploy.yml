@@ -91,7 +91,11 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           docker compose logs > artifacts/docker.log 2>&1
+          # Копируем .env в папку artifacts (с флагом Force)
           Copy-Item -Path ".env" -Destination "artifacts/.env" -Force
+          
+          # ХАК ДЛЯ WINDOWS: снимаем атрибут "скрытый" с файла внутри папки artifacts
+          attrib -h artifacts\.env
           "Тест завершён $(Get-Date)" > artifacts/report.txt
 
       - name: Upload artifacts
