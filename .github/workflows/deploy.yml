@@ -1,0 +1,102 @@
+name: Deploy and Test
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  COMPOSE_PROJECT_NAME: myapp
+
+jobs:
+  deploy-and-test:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file from secrets
+        shell: pwsh
+        run: |
+          @"
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          APP_PORT=${{ secrets.APP_PORT }}
+          APP_SECRET=${{ secrets.APP_SECRET }}
+          API_KEY=${{ secrets.API_KEY }}
+          COMPOSE_PROJECT_NAME=${{ env.COMPOSE_PROJECT_NAME }}
+          "@ | Out-File -FilePath .env -Encoding utf8
+          Write-Host ".env создан"
+
+      - name: Deploy with Docker Compose
+        shell: pwsh
+        run: |
+          # Останавливаем старые контейнеры и удаляем тома, чтобы БД накатилась заново
+          docker compose down -v
+          docker compose up -d --build
+          Start-Sleep -Seconds 20
+          docker compose ps
+
+      - name: Check containers are running
+        shell: pwsh
+        run: |
+          $status = docker compose ps
+          if ($status -match "Up") {
+            Write-Host "✓ Все контейнеры запущены"
+          } else {
+            Write-Host "✗ Ошибка: контейнеры не запустились"
+            docker compose logs
+            exit 1
+          }
+
+      - name: Test application and DB
+        shell: pwsh
+        run: |
+          Write-Host "1. Проверяю, что приложение отвечает (главная страница)..."
+          curl.exe -f http://localhost:8080/
+          
+          Write-Host "2. Сверяю данные БД и API..."
+          
+          # 1. Считаем строки напрямую в базе данных
+          $dbCount = (docker compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;" | Out-String).Trim()
+          
+          # 2. Запрашиваем список элементов через API приложения (у тебя это /api/items)
+          $apiResponse = curl.exe -s http://localhost:8080/api/items
+          
+          # 3. Считаем, сколько элементов вернул API (парсим JSON)
+          $jsonItems = $apiResponse | ConvertFrom-Json
+          if ($null -eq $jsonItems) {
+              $webCount = 0
+          } else {
+              $webCount = @($jsonItems).Count
+          }
+
+          Write-Host "Записей в БД: $dbCount"
+          Write-Host "Записей отдал API: $webCount"
+
+          if ($dbCount -eq $webCount) {
+            Write-Host "✓ Тест пройден: данные из БД и веб-интерфейса совпадают!"
+          } else {
+            Write-Host "✗ Ошибка: цифры не совпадают."
+            exit 1
+          }
+
+      - name: Save logs and .env as artifact
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          docker compose logs > artifacts/docker.log 2>&1
+          Copy-Item .env artifacts/.env -ErrorAction SilentlyContinue
+          "Тест завершён $(Get-Date)" > artifacts/report.txt
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-artifacts
+          path: artifacts/
